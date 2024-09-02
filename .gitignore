@@ -1,0 +1,9 @@
+build
+
+.clangd
+.cproject
+.project
+.settings
+
+subprojects/*
+!subprojects/*.wrap
