@@ -12,7 +12,7 @@ extern "C" int LLVMFuzzerTestOneInput(const char* data, size_t size) {
     try {
         Date d;
         d.parse(s);
-        d.to_utc_string();
+        d.to_gmt_string();
         d.to_orig_string();
     } catch (...) {
         return 0;

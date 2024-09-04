@@ -810,11 +810,11 @@ TEST(EnvTest, valid) {
     }
 }
 
-#define DATETIME_UTC_VALID(string, date)                                                           \
+#define DATETIME_GMT_VALID(string, date)                                                           \
     {                                                                                              \
         Date d;                                                                                    \
         d.parse(string);                                                                           \
-        EXPECT_EQ(d.to_utc_string(), date);                                                        \
+        EXPECT_EQ(d.to_gmt_string(), date);                                                        \
     }
 
 #define DATETIME_ZONE_VALID(zone)                                                                  \
@@ -865,23 +865,23 @@ TEST(DateTest, valid) {
     DATETIME_ZONE_VALID("JST");
     DATETIME_ZONE_VALID("EAD");
 
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM AHS", "Sun Aug 11, 2024 10:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM AHD", "Sun Aug 11, 2024 09:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM YST", "Sun Aug 11, 2024 09:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM PST", "Sun Aug 11, 2024 08:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM PDT", "Sun Aug 11, 2024 07:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM MST", "Sun Aug 11, 2024 07:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM MDT", "Sun Aug 11, 2024 06:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM CST", "Sun Aug 11, 2024 06:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM EDT", "Sun Aug 11, 2024 04:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM AST", "Sun Aug 11, 2024 04:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM GMT", "Sun Aug 11, 2024 12:00 AM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM BST", "Sat Aug 10, 2024 11:00 PM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM WES", "Sat Aug 10, 2024 11:00 PM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM WED", "Sat Aug 10, 2024 10:00 PM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM EMT", "Sat Aug 10, 2024 10:00 PM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM MTS", "Sat Aug 10, 2024 09:00 PM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM MTD", "Sat Aug 10, 2024 08:00 PM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM JST", "Sat Aug 10, 2024 03:00 PM UTC");
-    DATETIME_UTC_VALID("Sun Aug 11, 2024 12:00 AM EAD", "Sat Aug 10, 2024 02:00 PM UTC");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM AHS", "Sun Aug 11, 2024 10:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM AHD", "Sun Aug 11, 2024 09:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM YST", "Sun Aug 11, 2024 09:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM PST", "Sun Aug 11, 2024 08:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM PDT", "Sun Aug 11, 2024 07:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM MST", "Sun Aug 11, 2024 07:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM MDT", "Sun Aug 11, 2024 06:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM CST", "Sun Aug 11, 2024 06:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM EDT", "Sun Aug 11, 2024 04:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM AST", "Sun Aug 11, 2024 04:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM GMT", "Sun Aug 11, 2024 12:00 AM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM BST", "Sat Aug 10, 2024 11:00 PM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM WES", "Sat Aug 10, 2024 11:00 PM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM WED", "Sat Aug 10, 2024 10:00 PM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM EMT", "Sat Aug 10, 2024 10:00 PM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM MTS", "Sat Aug 10, 2024 09:00 PM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM MTD", "Sat Aug 10, 2024 08:00 PM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM JST", "Sat Aug 10, 2024 03:00 PM GMT");
+    DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM EAD", "Sat Aug 10, 2024 02:00 PM GMT");
 }
