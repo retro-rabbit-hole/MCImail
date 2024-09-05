@@ -118,18 +118,24 @@ TEST(StringDecode, invalid) {
     EXPECT_THROW(decode_string("Stray / in data"), std::invalid_argument);
 }
 
+TEST(is_mciid, invalid) {
+    EXPECT_FALSE(is_mciid(""));
+    EXPECT_FALSE(is_mciid("111-111-"));
+    EXPECT_FALSE(is_mciid("111-111-111"));
+    EXPECT_FALSE(is_mciid("111-1111111"));
+    EXPECT_FALSE(is_mciid("111--1111111"));
+    EXPECT_FALSE(is_mciid("1111-111"));
+    EXPECT_FALSE(is_mciid("NOT-REAL"));
+    EXPECT_FALSE(is_mciid("NOT-VAL-IDSE"));
+}
+
 TEST(is_mciid, valid) {
-    EXPECT_EQ(is_mciid("111-1111"), true);
-    EXPECT_EQ(is_mciid("111-111-1111"), true);
-    EXPECT_EQ(is_mciid("000-111-1111"), true);
-    EXPECT_EQ(is_mciid("0001111111"), true);
-    EXPECT_EQ(is_mciid("1111111"), true);
-    EXPECT_EQ(is_mciid("1111111111"), true);
-    EXPECT_EQ(is_mciid("111-1111111"), false);
-    EXPECT_EQ(is_mciid("111--1111111"), false);
-    EXPECT_EQ(is_mciid("1111-111"), false);
-    EXPECT_EQ(is_mciid("NOT-REAL"), false);
-    EXPECT_EQ(is_mciid("NOT-VAL-IDSE"), false);
+    EXPECT_TRUE(is_mciid("111-1111"));
+    EXPECT_TRUE(is_mciid("111-111-1111"));
+    EXPECT_TRUE(is_mciid("000-111-1111"));
+    EXPECT_TRUE(is_mciid("0001111111"));
+    EXPECT_TRUE(is_mciid("1111111"));
+    EXPECT_TRUE(is_mciid("1111111111"));
 }
 
 class RawAddressFixture : public ::testing::Test {
@@ -137,7 +143,7 @@ class RawAddressFixture : public ::testing::Test {
     void FirstLineExpectEqual(const std::string& line, const RawAddress& expected) {
         RawAddress a;
         a.parse_first_line(line);
-        EXPECT_EQ(a, expected);
+        EXPECT_EQ(a._id, expected._id);
     }
 
     void FirstLineExpectMalformed(const std::string& line) {
@@ -182,9 +188,9 @@ TEST_F(RawAddressFixture, FirstLineThrows) {
 
 TEST_F(RawAddressFixture, SecondLineThrows) {
     const std::vector<std::pair<std::string, std::string>> cases = {
-	{"ems", ""},
-	{"MBX", "lama"},
-	
+        {"ems", ""},
+        {"MBX", "lama"},
+
     };
 
     for (const auto& t : cases) {

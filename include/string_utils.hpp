@@ -28,6 +28,10 @@ inline bool is_printable(const std::string_view sv) {
     return std::all_of(sv.begin(), sv.end(), [](char c) { return c >= 32 && c <= 126; });
 }
 
+inline bool is_numeric(const std::string_view sv) {
+    return std::all_of(sv.begin(), sv.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
 inline bool is_printable(const std::string& str) { return is_printable(std::string_view(str)); }
 
 inline bool icompare(const std::string_view haystack, const char* needle) {

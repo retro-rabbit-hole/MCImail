@@ -1,5 +1,6 @@
 #include <format>
 #include <print>
+#include <regex>
 #include <string_view>
 
 #include "address.hpp"
@@ -9,28 +10,9 @@
 bool is_mciid(std::string_view line) {
     // MCI IDs are in the form of:
     // 123-4567, 123-456-7890, 1234567, 1234567890
-
-    switch (line.length()) {
-    case 7:
-    case 8:
-    case 10:
-    case 12: {
-        for (size_t i = 0; i < line.length(); ++i) {
-            if (line[i] < '0' || line[i] > '9') {
-                if (line[i] == '-' && (i == 3 || i == 7)) {
-                    continue;
-                }
-                return false;
-            }
-        }
-        break;
-    }
-
-    default:
-        return false;
-    }
-
-    return true;
+  
+    static const std::regex mciid_regex(R"(^(\d{3}-\d{4}|\d{3}-\d{3}-\d{4}|\d{7}|\d{10})$)");
+    return std::regex_match(line.begin(), line.end(), mciid_regex);
 }
 
 std::string canonicalize_mciid(std::string_view line) {
@@ -57,25 +39,12 @@ std::string canonicalize_mciid(std::string_view line) {
         return std::string(line);
     }
 
-    // We have a string of numbers only
-    std::string retval;
-    retval.reserve(12);
-    // Add first 3 digits
-    retval += line.substr(0, 3);
-    retval += '-';
-
+    // We have numbers only, add the dashes
     if (line.length() == 7) {
-        // Add last 4 digits
-        retval += line.substr(3);
+        return std::format("{}-{}", line.substr(0, 3), line.substr(3));
     } else {
-        // Add second group of 3 digits
-        retval += line.substr(3, 3);
-        retval += '-';
-        // Add last 4 digits
-        retval += line.substr(6);
+        return std::format("{}-{}-{}", line.substr(0, 3), line.substr(3, 3), line.substr(6));
     }
-
-    return retval;
 }
 
 bool RawAddress::operator==(const RawAddress& rhs) const {
