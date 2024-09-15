@@ -14,8 +14,12 @@ void validate_pdu_line(std::string_view line) {
 
     // Shortest possible valid PDU is /ENV\r
     // All PDUs must start with a /
-    if (len < 5 || !line.starts_with('/')) {
-        throw PduSyntaxError("PDU error");
+    if (len < 5) {
+        throw PduSyntaxError("PDU invalid: too short");
+    }
+
+    if (!line.starts_with('/')) {
+        throw PduSyntaxError("PDU invalid: doesn't start with a '/'");
     }
 
     if (std::count(line.cbegin(), line.cend(), '*') > 1) {
@@ -99,7 +103,7 @@ PduType PduParser::parse_pdu_start(std::string_view& line_parse) {
     return parse_pdu_type(line_parse);
 }
 
-void PduParser::parse_line(std::string_view line) {
+awaitable<void> PduParser::parse_line(std::string_view line) {
     switch (_state) {
     case state::idle:
         parse_first_line(line);
@@ -114,6 +118,8 @@ void PduParser::parse_line(std::string_view line) {
         throw PduSyntaxError("Unexpected data after Pdu");
 #endif
     }
+
+    co_return;
 }
 
 void PduParser::parse_first_line(std::string_view line) {
@@ -157,6 +163,9 @@ void PduParser::parse_first_line(std::string_view line) {
         break;
     case PduType::type_id::env:
         _current_pdu.emplace<EnvPdu>();
+        break;
+    case PduType::type_id::text:
+        _current_pdu.emplace<TextPdu>();
         break;
     default:
         throw PduSyntaxError("Unhandled PDU type");

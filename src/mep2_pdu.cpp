@@ -355,3 +355,66 @@ void EnvelopeHeaderPdu::_finalize() {
     }
 #endif
 }
+
+void TextPdu::parse_options(std::string_view options) {
+    // This is fine, default to ascii
+    if (!options.length()) {
+        return;
+    }
+
+    // Parse type field
+    lstrip(options);
+    if (icompare(options, "ascii")) {
+        _content_type = content_type::ascii;
+    } else if (icompare(options, "printable")) {
+        _content_type = content_type::ascii;
+    } else if (icompare(options, "env")) {
+        _content_type = content_type::env;
+    } else if (icompare(options, "binary")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "g3fax")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "tlx")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "voice")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "tif0")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "tif1")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "ttx")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "videotex")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "encrypted")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "sfd")) {
+        _content_type = content_type::binary;
+    } else if (icompare(options, "racal")) {
+        _content_type = content_type::binary;
+    } else {
+        throw PduMalformedDataError("Unknown text type");
+    }
+
+    // Parse description
+    size_t delim = options.find_first_of(':');
+    if (delim == std::string_view::npos) {
+        return;
+    }
+
+    if (delim == options.length()) {
+        return;
+    }
+
+    std::string_view description = options.substr(delim + 1);
+    strip(description);
+
+    if (!description.length()) {
+        return;
+    }
+
+    _description = decode_string(description);
+}
+
+void TextPdu::_parse_line(std::string_view line) {
+}

@@ -296,7 +296,28 @@ class EnvPdu : public EnvelopeHeaderPdu {
     void _parse_line(std::string_view line) { parse_envelope_line(line, false); }
 };
 
+class TextPdu : public Pdu {
+  public:
+    enum class content_type { ascii, env, binary };
+
+    TextPdu() : Pdu(PduType(PduType::type_id::text)) {}
+    void parse_options(std::string_view options);
+
+    content_type get_content_type() const { return _content_type; }
+    const std::string& get_description() const { return *_description; }
+
+    bool has_description() const { return _description.has_value(); }
+
+  private:
+    void _parse_line(std::string_view line);
+    void _finalize() {};
+
+    // If unspecified we assume ASCII
+    content_type _content_type{TextPdu::content_type::ascii};
+    std::optional<std::string> _description;
+};
+
 using PduVariant = std::variant<BusyPdu, CreatePdu, TermPdu, SendPdu, ScanPdu, TurnPdu, CommentPdu,
-                                VerifyPdu, EnvPdu>;
+                                VerifyPdu, EnvPdu, TextPdu>;
 
 #endif /* INCLUDE_MEP2_PDU_HPP_ */

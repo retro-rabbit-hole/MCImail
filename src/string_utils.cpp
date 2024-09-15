@@ -20,7 +20,7 @@ inline unsigned char decode_percent(std::string_view sv) {
     if (sv[0] != '%') {
         throw std::runtime_error("expected %% code");
     }
-
+	
     unsigned char hex1 = sv[1];
     unsigned char hex2 = sv[2];
     return (char_to_hex(hex1) << 4) | char_to_hex(hex2);
@@ -52,6 +52,13 @@ std::string decode_string(std::string_view sv) {
             if (i + 2 >= sv.length()) {
                 throw std::invalid_argument("Invalid %% code: too little space");
             }
+            
+            // transparent %\r\n, this is not actually part of the text
+            if (sv[i + 1] == '\r' && sv[i + 2] == '\n') {
+				i += 2;
+				continue;
+			}
+			
             c = decode_percent(sv.substr(i, 3));
             i += 2;
 

@@ -1,15 +1,176 @@
+#include <exception>
+#include <filesystem>
+#include <fstream>
 #include <print>
+#include <regex>
 #include <string_view>
 #include <variant>
 
 #include <gtest/gtest.h>
 
 #include "address.hpp"
+#include "asio/awaitable.hpp"
 #include "date.hpp"
 #include "mep2_errors.hpp"
 #include "mep2_pdu.hpp"
 #include "mep2_pdu_parser.hpp"
 #include "string_utils.hpp"
+#include "temporary_storage.hpp"
+
+#define CONCAT_IMPL(x, y) x##_##y
+#define MACRO_CONCAT(x, y) CONCAT_IMPL(x, y)
+
+std::string escape_crlf(std::string_view s) {
+    std::string res;
+    res = std::regex_replace(std::string(s), std::regex("\r"), "\\r");
+    res = std::regex_replace(res, std::regex("\n"), "\\n");
+    return res;
+}
+
+class AsyncTestBase {
+  protected:
+    asio::io_context io_context;
+
+    template <typename Func> void RunAsync(Func&& func) {
+        std::exception_ptr eptr;
+        io_context.reset();
+
+        auto completion_handler = [&](std::exception_ptr ep) {
+            if (ep) {
+                eptr = ep;
+            }
+        };
+
+        co_spawn(io_context, std::forward<Func>(func), completion_handler);
+
+        io_context.run();
+
+        if (eptr) {
+            std::rethrow_exception(eptr);
+        }
+    }
+};
+
+class PduParserTestBase : public AsyncTestBase {
+  protected:
+    PduParser p;
+
+    void ParseLine(const std::string& s) {
+        RunAsync([&]() -> asio::awaitable<void> {
+            p.reset();
+            std::string_view sv(s);
+            if (sv.empty()) {
+                co_await p.parse_line(sv);
+                co_return;
+            }
+
+            while (!sv.empty()) {
+                int delim_len = 1;
+                size_t l = sv.find_first_of('\r');
+
+                if (l == std::string_view::npos)
+                    break;
+
+                if (l + 1 < sv.length()) {
+                    if (sv[l + 1] == '\n') {
+                        ++delim_len;
+                    }
+                }
+
+                co_await p.parse_line(sv.substr(0, l + delim_len));
+                sv.remove_prefix(l + delim_len);
+            }
+
+            if (!sv.empty()) {
+                co_await p.parse_line(sv);
+            }
+        });
+    }
+};
+
+class AsyncTest : public AsyncTestBase, public ::testing::Test {};
+class PduParserTest : public PduParserTestBase, public ::testing::Test {};
+
+class StringUtilsFixture : public ::testing::Test {
+  protected:
+    void ExpectLstrip(const std::string& in, const std::string& expected) {
+        std::string_view sv(in);
+        lstrip(sv);
+        EXPECT_EQ(sv, expected);
+    }
+
+    void ExpectRstrip(const std::string& in, const std::string& expected) {
+        std::string_view sv(in);
+        rstrip(sv);
+        EXPECT_EQ(sv, expected);
+    }
+
+    void ExpectStrip(const std::string& in, const std::string& expected) {
+        std::string_view sv(in);
+        strip(sv);
+        EXPECT_EQ(sv, expected);
+    }
+};
+
+TEST_F(StringUtilsFixture, lstrip) {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        // Comment to make clang-format happy
+        {"", ""},
+        {" ", ""},
+        {"\t \t ", ""},
+        {"ABCD", "ABCD"},
+        {"ABCD ", "ABCD "},
+        {" ABCD", "ABCD"},
+        {" ABCD ", "ABCD "},
+        {"\tABCD\t", "ABCD\t"},
+        {"\t \tAB CD", "AB CD"},
+        {"\tA\tB", "A\tB"}};
+
+    for (const auto& t : cases) {
+        SCOPED_TRACE(testing::Message() << "with test_data['" << t.first << "']");
+        ExpectLstrip(t.first, t.second);
+    }
+}
+
+TEST_F(StringUtilsFixture, rstrip) {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        // Comment to make clang-format happy
+        {"", ""},
+        {" ", ""},
+        {"\t \t ", ""},
+        {"ABCD", "ABCD"},
+        {"ABCD ", "ABCD"},
+        {" ABCD", " ABCD"},
+        {" ABCD ", " ABCD"},
+        {"\tABCD\t", "\tABCD"},
+        {"\t \tAB CD", "\t \tAB CD"},
+        {"\tA\tB", "\tA\tB"}};
+
+    for (const auto& t : cases) {
+        SCOPED_TRACE(testing::Message() << "with test_data['" << t.first << "']");
+        ExpectRstrip(t.first, t.second);
+    }
+}
+
+TEST_F(StringUtilsFixture, strip) {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        // Comment to make clang-format happy
+        {"", ""},
+        {" ", ""},
+        {"\t \t ", ""},
+        {"ABCD", "ABCD"},
+        {"ABCD ", "ABCD"},
+        {" ABCD", "ABCD"},
+        {" ABCD ", "ABCD"},
+        {"\tABCD\t", "ABCD"},
+        {"\t \tAB CD", "AB CD"},
+        {"\tA\tB", "A\tB"}};
+
+    for (const auto& t : cases) {
+        SCOPED_TRACE(testing::Message() << "with test_data['" << t.first << "']");
+        ExpectStrip(t.first, t.second);
+    }
+}
 
 class PduTypeFixture : public ::testing::Test {
   protected:
@@ -33,6 +194,7 @@ TEST_F(PduTypeFixture, Types) {
     };
 
     for (const auto& t : types) {
+        SCOPED_TRACE(testing::Message() << "with test_data[" << t.second << "]");
         ExpectCorrectIdName(t.first, t.second);
     }
 }
@@ -104,7 +266,8 @@ TEST_F(StringDecodeFixture, ValidValues) {
         {"Single carriage return will be deleted\r", "Single carriage return will be deleted"},
         {"Single linefeed will be deleted\x0a", "Single linefeed will be deleted"},
         {"Single carriage return will be deleted\x0d", "Single carriage return will be deleted"},
-        {"Strip top bits: \xc1\xd3\xc3\xc9\xc9", "Strip top bits: ASCII"}};
+        {"Strip top bits: \xc1\xd3\xc3\xc9\xc9", "Strip top bits: ASCII"},
+        {"Transparent%\r\n crlf are removed", "Transparent crlf are removed"}};
 
     for (const auto& t : cases) {
         SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
@@ -210,6 +373,8 @@ TEST_F(RawAddressFixture, Equals) {
         {"111-111-1111 ", {._id = "111-111-1111"}},
         {"1111111111 ", {._id = "111-111-1111"}},
         {"0011111111 ", {._id = "001-111-1111"}},
+        {"MCI ID: 111-1111", {._id = "111-1111"}},
+        {"Gandalf the Gray / MCI ID: 111-1111", {._name = "Gandalf the Gray", ._id = "111-1111"}},
         {"Gandalf the Gray  ", {._name = "Gandalf the Gray"}},
         {"Gandalf the Gray/111-1111", {._name = "Gandalf the Gray", ._id = "111-1111"}},
         {"Gandalf the Gray / 111-1111 ", { ._name = "Gandalf the Gray", ._id = "111-1111", }}, 
@@ -305,517 +470,6 @@ TEST(RawAddressSecond, valid) {
     }
 }
 
-TEST(ParserTest, invalid) {
-    PduParser p;
-    EXPECT_THROW(p.parse_line(""), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/"), PduSyntaxError);
-
-    EXPECT_THROW(p.parse_line("NOT A SLASH\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/create\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/create*\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/create*"), PduSyntaxError);
-
-    EXPECT_THROW(p.parse_line("/create*ZZZZ*\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/create*QWER\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/create invalid parameter*09B5\r"), PduSyntaxError);
-
-    EXPECT_THROW(p.parse_line("/create*1234\r"), PduChecksumError);
-    EXPECT_THROW(p.parse_line("/verify*zzzz\r"), PduSyntaxError);
-
-    EXPECT_THROW(p.parse_line("/create/*ZZZZ\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("//create*ZZZZ\r"), PduSyntaxError);
-
-    p.parse_line("/verify\r\n");
-    EXPECT_THROW(p.parse_line("/end verify garbage*ZZZ\r\n"), PduSyntaxError);
-}
-
-#define TEST_SINGLE_PDU(input, expected_type)                                                      \
-    {                                                                                              \
-        p.parse_line(input);                                                                       \
-        EXPECT_TRUE(p.is_complete());                                                              \
-        PduVariant pdu = p.extract_pdu();                                                          \
-        EXPECT_TRUE(std::holds_alternative<expected_type>(pdu));                                   \
-    }
-
-#define TEST_MULTI_PDU(input, expected_type)                                                       \
-    {                                                                                              \
-        std::string_view sv(input);                                                                \
-        while (!sv.empty()) {                                                                      \
-            size_t l = sv.find_first_of("\r\n");                                                   \
-            if (l == std::string_view::npos)                                                       \
-                break;                                                                             \
-            p.parse_line(sv.substr(0, l + 2));                                                     \
-            sv.remove_prefix(l + 2);                                                               \
-        }                                                                                          \
-        EXPECT_TRUE(p.is_complete());                                                              \
-        PduVariant pdu = p.extract_pdu();                                                          \
-        EXPECT_TRUE(std::holds_alternative<expected_type>(pdu));                                   \
-    }
-
-TEST(ParserTest, valid) {
-    PduParser p;
-    TEST_SINGLE_PDU("/create*ZZZZ\r\n", CreatePdu);
-    TEST_SINGLE_PDU("/CREATE*020D\r\n", CreatePdu);
-    TEST_SINGLE_PDU("/CrEaTe*026D\r\n", CreatePdu);
-    TEST_SINGLE_PDU("/send *0223\r\n", SendPdu);
-    TEST_SINGLE_PDU("/send\t*020C\r\n", SendPdu);
-    TEST_SINGLE_PDU("/send \t *024C\r\n", SendPdu);
-    TEST_SINGLE_PDU("/send*0203\r", SendPdu);
-    TEST_SINGLE_PDU("/send *0223\r", SendPdu);
-    TEST_SINGLE_PDU("/send\t*020C\r", SendPdu);
-    TEST_SINGLE_PDU("/send \t *024C\r", SendPdu);
-    TEST_SINGLE_PDU("/send*0203 \r", SendPdu);
-    TEST_SINGLE_PDU("/send *0223\t\r", SendPdu);
-    TEST_SINGLE_PDU("/send\t*020C \t \r", SendPdu);
-    TEST_SINGLE_PDU("/send \t *024C\t\t\t\t\r", SendPdu);
-
-    TEST_SINGLE_PDU("/busy*021C\r\n", BusyPdu);
-    TEST_SINGLE_PDU("/create*02CD\r\n", CreatePdu);
-    TEST_SINGLE_PDU("/term*0211\r\n", TermPdu);
-    TEST_SINGLE_PDU("/send*0203\r\n", SendPdu);
-    TEST_SINGLE_PDU("/scan*01FE\r\n", ScanPdu);
-    TEST_SINGLE_PDU("/turn*0222\r\n", TurnPdu);
-
-    TEST_MULTI_PDU("/verify\r\nTo: Gandalf\r\n/end verify*0B01\r\n", VerifyPdu);
-    TEST_MULTI_PDU("/env\r\nTo: Gandalf\r\n/end env*0869\r\n", EnvPdu);
-
-    TEST_MULTI_PDU("/comment\r\nThis is a comment\r\n/end comment*0E1B\r\n", CommentPdu);
-}
-
-TEST(ScanTest, invalid) {
-    PduParser p;
-    EXPECT_THROW(p.parse_line("/scan FOLDER=((INBOX))*ZZZZ\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/scan FOLDER*ZZZZ\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/scan FOLDER=INBOX*ZZZZ\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/scan FOLDER=(INBOX), FOLDER=(OUTBOX)*ZZZZ\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/scan PRIORITY=something*ZZZZ\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/scan FOLDER=(NOTREAL)*ZZZZ\r"), PduMalformedDataError);
-
-    EXPECT_THROW(p.parse_line("/scan SUBJECT=(Invalid%00Character)*ZZZZ\r"), PduMalformedDataError);
-}
-
-#define SCANPDU_CREATE(option)                                                                     \
-    PduParser p;                                                                                   \
-    p.parse_line("/scan " option "*ZZZZ\r\n");                                                     \
-    ScanPdu pdu = std::get<ScanPdu>(p.extract_pdu());
-
-#define SCANPDU_VALID(option, field, value)                                                        \
-    {                                                                                              \
-        SCANPDU_CREATE(option);                                                                    \
-        EXPECT_EQ(pdu.field(), value);                                                             \
-    }
-
-TEST(ScanTest, valid) {
-    PduParser p;
-
-    SCANPDU_VALID("", get_folder_id, ScanPdu::folder_id::inbox);
-    SCANPDU_VALID("FOLDER=(INBOX)", get_folder_id, ScanPdu::folder_id::inbox);
-    SCANPDU_VALID("FOLDER=(INBOX) ", get_folder_id, ScanPdu::folder_id::inbox);
-    SCANPDU_VALID("FOLDER=(INBOX) \t\t\t ", get_folder_id, ScanPdu::folder_id::inbox);
-
-    SCANPDU_VALID("FOLDER=(OUTBOX)", get_folder_id, ScanPdu::folder_id::outbox);
-    SCANPDU_VALID("FOLDER=(DESK)", get_folder_id, ScanPdu::folder_id::desk);
-    SCANPDU_VALID("FOLDER=(TRASH)", get_folder_id, ScanPdu::folder_id::trash);
-    SCANPDU_VALID("FOLDER=(OUTBOX),FOLDER=(TRASH)", get_folder_id, ScanPdu::folder_id::trash);
-
-    {
-        SCANPDU_CREATE("FOLDER=(OUTBOX),SUBJECT=(Some kind of subject)");
-        EXPECT_EQ(pdu.get_folder_id(), ScanPdu::folder_id::outbox);
-        EXPECT_EQ(pdu.get_subject(), "Some kind of subject");
-    }
-
-    {
-        SCANPDU_CREATE("FROM=(Gandalf the Gray)");
-        EXPECT_EQ(pdu.get_folder_id(), ScanPdu::folder_id::inbox);
-        EXPECT_EQ(pdu.get_from(), "Gandalf the Gray");
-    }
-
-    {
-        SCANPDU_CREATE("FOLDER=(OUTBOX),SUBJECT=(Some kind of "
-                       "subject),FROM=(Gandalf the Gray)");
-        EXPECT_EQ(pdu.get_folder_id(), ScanPdu::folder_id::outbox);
-        EXPECT_EQ(pdu.get_subject(), "Some kind of subject");
-        EXPECT_EQ(pdu.get_from(), "Gandalf the Gray");
-    }
-}
-
-// Scan and Turn PDUs use the same code
-TEST(TurnTest, valid) {
-    PduParser p;
-    {
-        p.parse_line("/turn FROM=(Gandalf the Gray)*ZZZZ\r");
-        TurnPdu pdu = std::get<TurnPdu>(p.extract_pdu());
-        EXPECT_EQ(pdu.get_folder_id(), TurnPdu::folder_id::inbox);
-        EXPECT_EQ(pdu.get_from(), "Gandalf the Gray");
-    }
-}
-
-#define VERIFYPDU_INVALID(line, exception)                                                         \
-    {                                                                                              \
-        PduParser p;                                                                               \
-        p.parse_line("/verify\r\n");                                                               \
-        EXPECT_THROW(p.parse_line(line), exception);                                               \
-    }
-
-TEST(CommentTest, invalid) {
-    {
-        PduParser p;
-        p.parse_line("/comment\r\n");
-        p.parse_line("Invalid / in text\r\n");
-        EXPECT_THROW(p.parse_line("/end comment*zzzz\r\n"), PduMalformedDataError);
-    }
-}
-
-TEST(VerifyTest, invalid) {
-    PduParser p;
-    EXPECT_THROW(p.parse_line("/verify*ZZZZ\r"), PduSyntaxError);
-    EXPECT_THROW(p.parse_line("/verify NONEEXISTANT\r"), PduMalformedDataError);
-    EXPECT_THROW(p.parse_line("/verify STUFF STUFF\r"), PduMalformedDataError);
-
-    VERIFYPDU_INVALID("/end verify*0000\r\n", PduChecksumError);
-    VERIFYPDU_INVALID("/end verify*ZZZZ", PduSyntaxError);
-    VERIFYPDU_INVALID("/end verify*ZZZ\r\n", PduSyntaxError);
-    VERIFYPDU_INVALID("/end verify*", PduSyntaxError);
-    VERIFYPDU_INVALID("/end text*ZZZZ\r\n", PduSyntaxError);
-    VERIFYPDU_INVALID("/end verify*ZZZZ\r\n", PduNoEnvelopeDataError);
-
-    {
-        PduParser p;
-        p.parse_line("/verify\r\n");
-        p.parse_line("Cc: Gandalf\r\n");
-        EXPECT_THROW(p.parse_line("/end verify*ZZZZ\r"), PduToRequiredError);
-    }
-
-    // Unescaped '/' in address
-    {
-        PduParser p;
-        p.parse_line("/verify\r\n");
-        p.parse_line("To: Gandalf/111-1111\r\n");
-        EXPECT_THROW(p.parse_line("/end verify*ZZZZ\r\n"), PduMalformedDataError);
-    }
-
-    // Invalid options
-    {
-        PduParser p;
-        p.parse_line("/verify\r\n");
-        p.parse_line("To: Gandalf (,)\r\n");
-        EXPECT_THROW(p.parse_line("/end verify*ZZZZ\r\n"), PduMalformedDataError);
-    }
-
-    {
-        PduParser p;
-        p.parse_line("/verify\r\n");
-        p.parse_line("To: Gandalf (,BOARD)\r\n");
-        EXPECT_THROW(p.parse_line("/end verify*ZZZZ\r\n"), PduMalformedDataError);
-    }
-
-    {
-        PduParser p;
-        p.parse_line("/verify\r\n");
-        p.parse_line("To: Gandalf (NONEXISTANT)\r\n");
-        EXPECT_THROW(p.parse_line("/end verify*ZZZZ\r\n"), PduMalformedDataError);
-    }
-}
-
-#define VERIFYPDU_VALID(option, field, value)                                                      \
-    {                                                                                              \
-        PduParser p;                                                                               \
-        p.parse_line("/verify " option " \r\n");                                                   \
-        p.parse_line("To: Gandalf\r\n");                                                           \
-        p.parse_line("/end verify*ZZZZ\r\n");                                                      \
-        VerifyPdu pdu = std::get<VerifyPdu>(p.extract_pdu());                                      \
-        EXPECT_EQ(pdu.field(), value);                                                             \
-    }
-
-#define VERIFYPDU_ADDRESS_VALID(addresses, raw_to, raw_cc)                                         \
-    {                                                                                              \
-        PduParser p;                                                                               \
-        p.parse_line("/verify\r\n");                                                               \
-        std::string_view sv(addresses);                                                            \
-        while (!sv.empty()) {                                                                      \
-            size_t l = sv.find_first_of("\r\n");                                                   \
-            if (l == std::string_view::npos)                                                       \
-                break;                                                                             \
-            p.parse_line(sv.substr(0, l + 2));                                                     \
-            sv.remove_prefix(l + 2);                                                               \
-        }                                                                                          \
-        p.parse_line("/end verify*ZZZZ\r\n");                                                      \
-        VerifyPdu pdu = std::get<VerifyPdu>(p.extract_pdu());                                      \
-        EXPECT_EQ(pdu.get_to_address().size(), raw_to.size());                                     \
-        EXPECT_EQ(pdu.get_cc_address().size(), raw_cc.size());                                     \
-        for (size_t i = 0; i < pdu.get_to_address().size(); ++i) {                                 \
-            EXPECT_EQ(pdu.get_to_address()[i], raw_to[i]);                                         \
-        }                                                                                          \
-        for (size_t i = 0; i < pdu.get_cc_address().size(); ++i) {                                 \
-            EXPECT_EQ(pdu.get_cc_address()[i], raw_cc[i]);                                         \
-        }                                                                                          \
-    }
-
-TEST(VerifyTest, valid) {
-    PduParser p;
-    VERIFYPDU_VALID("", get_priority_id, VerifyPdu::priority_id::none);
-    VERIFYPDU_VALID("POSTAL", get_priority_id, VerifyPdu::priority_id::postal);
-    VERIFYPDU_VALID("ONITE", get_priority_id, VerifyPdu::priority_id::onite);
-
-    std::vector<RawAddress> empty;
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf\r\n", raw_to, empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf ()\r\n", raw_to, empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf", ._board = true, ._instant = true});
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf (BOARD,INSTANT)\r\n", raw_to, empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back(
-            {._name = "Gandalf", ._board = true, ._instant = true, ._list = true, ._owner = true});
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf (BOARD, INSTANT, LIST, OWNER)\r\n", raw_to, empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf", ._id = "111-1111"});
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf%2F111-1111\r\n", raw_to, empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf", ._id = "111-1111"});
-        std::vector<RawAddress> raw_cc;
-        raw_cc.push_back({._name = "Frodo", ._id = "222-2222"});
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf%2F111-1111\r\nCc: Frodo %2f 222-2222\r\n", raw_to,
-                                raw_cc);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back(
-            {._name = "Gandalf", ._ems = "Internet", ._mbx = {"gandalf@hobbiton.org"}});
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf\r\n Ems: Internet\r\n Mbx: gandalf@hobbiton.org\r\n",
-                                raw_to, empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({
-            ._name = "Gandalf",
-            ._organization = "The Good Guys",
-            ._location = "Hobbiton",
-        });
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf %2F Loc: Hobbiton %2F Org: The Good Guys \r\n", raw_to,
-                                empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({
-            ._name = "Gandalf",
-            ._organization = "The Good Guys",
-            ._location = "Hobbiton",
-        });
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf%2FLoc:Hobbiton%2FOrg:The Good Guys\r\n", raw_to,
-                                empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({
-            ._name = "Gandalf",
-            ._unresolved_org_loc_1 = "Hobbiton",
-            ._unresolved_org_loc_2 = "The Good Guys",
-        });
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf %2F Hobbiton %2F The Good Guys \r\n", raw_to, empty);
-    }
-
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back(
-            {._name = "Gandalf", ._ems = "Internet", ._mbx = {"gandalf@hobbiton.org"}});
-        raw_to.push_back({._name = "Frodo", ._ems = "Internet", ._mbx = {"frodo@hobbiton.org"}});
-
-        VERIFYPDU_ADDRESS_VALID("To: Gandalf\r\n"
-                                " Ems: Internet\r\n"
-                                " Mbx: gandalf@hobbiton.org\r\n"
-                                "To: Frodo\r\n"
-                                "\tEms: Internet\r\n"
-                                "\tMbx: frodo@hobbiton.org\r\n",
-                                raw_to, empty);
-    }
-}
-
-#define ENVPDU_ADDRESS_VALID(addresses, raw_to, raw_cc, from)                                      \
-    PduParser p;                                                                                   \
-    p.parse_line("/env\r\n");                                                                      \
-    std::string_view sv(addresses);                                                                \
-    while (!sv.empty()) {                                                                          \
-        size_t l = sv.find_first_of("\r\n");                                                       \
-        if (l == std::string_view::npos)                                                           \
-            break;                                                                                 \
-        p.parse_line(sv.substr(0, l + 2));                                                         \
-        sv.remove_prefix(l + 2);                                                                   \
-    }                                                                                              \
-    p.parse_line("/end env*ZZZZ\r\n");                                                             \
-    EnvPdu pdu = std::get<EnvPdu>(p.extract_pdu());                                                \
-    EXPECT_EQ(pdu.get_to_address().size(), raw_to.size());                                         \
-    EXPECT_EQ(pdu.get_cc_address().size(), raw_cc.size());                                         \
-    for (size_t i = 0; i < pdu.get_to_address().size(); ++i) {                                     \
-        EXPECT_EQ(pdu.get_to_address()[i], raw_to[i]);                                             \
-    }                                                                                              \
-    for (size_t i = 0; i < pdu.get_cc_address().size(); ++i) {                                     \
-        EXPECT_EQ(pdu.get_cc_address()[i], raw_cc[i]);                                             \
-    }                                                                                              \
-    EXPECT_TRUE(pdu.has_from_address());                                                           \
-    EXPECT_EQ(pdu.get_from_address(), from);
-
-TEST(EnvTest, invalid) {
-    {
-        PduParser p;
-        p.parse_line("/env\r\n");
-        p.parse_line("To: Bilbo\r\n");
-        p.parse_line("From: Gandalf\r\n");
-        p.parse_line("From: Frodo\r\n");
-        EXPECT_THROW(p.parse_line("/end env*ZZZZ\r"), PduEnvelopeDataError);
-    }
-}
-
-TEST(EnvTest, valid) {
-    PduParser p;
-    std::vector<RawAddress> empty;
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        RawAddress from = {._name = "Frodo"};
-
-        ENVPDU_ADDRESS_VALID("To: Gandalf\r\nFrom: Frodo\r\n", raw_to, empty, from);
-        EXPECT_FALSE(pdu.has_date());
-        EXPECT_FALSE(pdu.has_source_date());
-    }
-    {
-        Date d;
-        d.parse("Sun Aug 11, 2024 12:00 AM GMT");
-
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        RawAddress from = {._name = "Frodo"};
-
-        ENVPDU_ADDRESS_VALID("To: Gandalf\r\n"
-                             "From: Frodo\r\n"
-                             "Date: Sun Aug 11, 2024 12:00 AM GMT\r\n",
-                             raw_to, empty, from);
-        EXPECT_TRUE(pdu.has_date());
-        EXPECT_EQ(pdu.get_date(), d);
-        EXPECT_FALSE(pdu.has_source_date());
-    }
-    {
-        Date d;
-        d.parse("Sun Aug 11, 2024 12:00 AM GMT");
-        Date d2;
-        d2.parse("Fri Aug 11, 2023 12:00 AM GMT");
-
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        RawAddress from = {._name = "Frodo"};
-
-        ENVPDU_ADDRESS_VALID("To: Gandalf\r\n"
-                             "From: Frodo\r\n"
-                             "Date: Sun Aug 11, 2024 12:00 AM GMT\r\n"
-                             "Source-Date: Fri Aug 11, 2023 12:00 AM GMT\r\n",
-                             raw_to, empty, from);
-        EXPECT_TRUE(pdu.has_date());
-        EXPECT_EQ(pdu.get_date(), d);
-        EXPECT_TRUE(pdu.has_source_date());
-        EXPECT_EQ(pdu.get_source_date(), d2);
-    }
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        RawAddress from = {._name = "Frodo"};
-
-        ENVPDU_ADDRESS_VALID("To: Gandalf\r\n"
-                             "From: Frodo\r\n"
-                             "Subject: I hate this ring\r\n",
-                             raw_to, empty, from);
-        EXPECT_TRUE(pdu.has_subject());
-        EXPECT_EQ(pdu.get_subject(), "I hate this ring");
-    }
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        RawAddress from = {._name = "Frodo"};
-
-        ENVPDU_ADDRESS_VALID("To: Gandalf\r\n"
-                             "From: Frodo\r\n"
-                             "Message-ID: Special-message id\r\n",
-                             raw_to, empty, from);
-        EXPECT_TRUE(pdu.has_message_id());
-        EXPECT_EQ(pdu.get_message_id(), "Special-message id");
-    }
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        RawAddress from = {._name = "Frodo"};
-
-        ENVPDU_ADDRESS_VALID("To: Gandalf\r\n"
-                             "From: Frodo\r\n"
-                             "source-Message-ID: source Special-message id 1\r\n"
-                             "source-Message-ID: source Special-message id 2\r\n"
-                             "source-Message-ID: source Special-message id 3\r\n"
-                             "source-Message-ID: source Special-message id 4\r\n"
-                             "source-Message-ID: source Special-message id 5\r\n"
-                             "source-Message-ID: source Special-message id 6\r\n",
-
-                             raw_to, empty, from);
-        EXPECT_TRUE(pdu.has_source_message_id());
-        EXPECT_EQ(pdu.get_source_message_id()[0], "source Special-message id 2");
-        EXPECT_EQ(pdu.get_source_message_id()[1], "source Special-message id 3");
-        EXPECT_EQ(pdu.get_source_message_id()[2], "source Special-message id 4");
-        EXPECT_EQ(pdu.get_source_message_id()[3], "source Special-message id 5");
-        EXPECT_EQ(pdu.get_source_message_id()[4], "source Special-message id 6");
-    }
-    {
-        std::vector<RawAddress> raw_to;
-        raw_to.push_back({._name = "Gandalf"});
-        RawAddress from = {._name = "Frodo"};
-
-        ENVPDU_ADDRESS_VALID("To: Gandalf\r\n"
-                             "From: Frodo\r\n"
-                             "U-SOMETHING1: Unknown custom field 1\r\n"
-                             "U-BLAH1: Unknown custom field 2\r\n"
-                             "U-GODOT: Unknown custom field 3\r\n"
-                             "U-LLAMAS-ONE-TWO: Unknown custom field 4\r\n"
-                             "U-AND_OTHER-CHARS: Unknown custom field 5\r\n"
-                             "u-the-last-one: Unknown custom field 6\r\n",
-
-                             raw_to, empty, from);
-        EXPECT_TRUE(pdu.has_u_fields());
-        EXPECT_EQ(pdu.get_u_fields()[0].first, "U-BLAH1");
-        EXPECT_EQ(pdu.get_u_fields()[0].second, "Unknown custom field 2");
-
-        EXPECT_EQ(pdu.get_u_fields()[1].first, "U-GODOT");
-        EXPECT_EQ(pdu.get_u_fields()[1].second, "Unknown custom field 3");
-
-        EXPECT_EQ(pdu.get_u_fields()[2].first, "U-LLAMAS-ONE-TWO");
-        EXPECT_EQ(pdu.get_u_fields()[2].second, "Unknown custom field 4");
-
-        EXPECT_EQ(pdu.get_u_fields()[3].first, "U-AND_OTHER-CHARS");
-        EXPECT_EQ(pdu.get_u_fields()[3].second, "Unknown custom field 5");
-
-        EXPECT_EQ(pdu.get_u_fields()[4].first, "u-the-last-one");
-        EXPECT_EQ(pdu.get_u_fields()[4].second, "Unknown custom field 6");
-    }
-}
-
 #define DATETIME_GMT_VALID(string, date)                                                           \
     {                                                                                              \
         Date d;                                                                                    \
@@ -890,4 +544,444 @@ TEST(DateTest, valid) {
     DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM MTD", "Sat Aug 10, 2024 08:00 PM GMT");
     DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM JST", "Sat Aug 10, 2024 03:00 PM GMT");
     DATETIME_GMT_VALID("Sun Aug 11, 2024 12:00 AM EAD", "Sat Aug 10, 2024 02:00 PM GMT");
+}
+
+class PduParserSyntaxErrorException : public ::testing::TestWithParam<std::string>,
+                                      public PduParserTestBase {};
+class PduParserChecksumErrorException : public ::testing::TestWithParam<std::string>,
+                                        public PduParserTestBase {};
+class PduParserMalformedDataErrorException : public ::testing::TestWithParam<std::string>,
+                                             public PduParserTestBase {};
+
+TEST_P(PduParserSyntaxErrorException, SyntaxError) {
+    EXPECT_THROW(ParseLine(GetParam()), PduSyntaxError);
+}
+
+TEST_P(PduParserChecksumErrorException, ChecksumError) {
+    EXPECT_THROW(ParseLine(GetParam()), PduChecksumError);
+}
+
+TEST_P(PduParserMalformedDataErrorException, MalformedData) {
+    EXPECT_THROW(ParseLine(GetParam()), PduMalformedDataError);
+}
+
+INSTANTIATE_TEST_SUITE_P(Various, PduParserSyntaxErrorException,
+                         // clang-format off
+    testing::Values(
+	"", 
+	"/", 
+	"NOT A SLASH\r", 
+	"/     \r", 
+	"/create\r",
+	"/create*\r",
+	"create*ZZZZ*\r",
+	"/create*QWER\r",
+	"/create invalid parameter*09B5\r",
+	"/verify*zzzz\r",
+	"/create/*ZZZZ\r",
+	"//create*ZZZZ\r"
+	));
+// clang-format on
+
+INSTANTIATE_TEST_SUITE_P(Various, PduParserChecksumErrorException,
+                         testing::Values(
+                             // clang-format off
+						"/create*1234\r",
+						"/verify\r\n/end verify*0000\r\n"
+						));
+// clang-format oon
+
+TEST_F(PduParserTest, End) {
+    ParseLine("/verify\r");
+    EXPECT_THROW(ParseLine("/end verify garbage*ZZZ\r"), PduSyntaxError);
+}
+
+#define SIMPLE_PDU_TEST(line, expected_type)                                                       \
+    TEST_F(PduParserTest, MACRO_CONCAT(__COUNTER__, expected_type)) {                              \
+        ParseLine(line);                                                                           \
+        EXPECT_TRUE(p.is_complete());                                                              \
+        PduVariant pdu = p.extract_pdu();                                                          \
+        EXPECT_TRUE(std::holds_alternative<expected_type>(pdu));                                   \
+    }
+
+SIMPLE_PDU_TEST("/create*ZZZZ\r\n", CreatePdu);
+SIMPLE_PDU_TEST("/CREATE*020D\r\n", CreatePdu);
+SIMPLE_PDU_TEST("/CrEaTe*026D\r\n", CreatePdu);
+SIMPLE_PDU_TEST("/send *0223\r\n", SendPdu);
+SIMPLE_PDU_TEST("/send\t*020C\r\n", SendPdu);
+SIMPLE_PDU_TEST("/send \t *024C\r\n", SendPdu);
+SIMPLE_PDU_TEST("/send*0203\r", SendPdu);
+SIMPLE_PDU_TEST("/send *0223\r", SendPdu);
+SIMPLE_PDU_TEST("/send\t*020C\r", SendPdu);
+SIMPLE_PDU_TEST("/send \t *024C\r", SendPdu);
+SIMPLE_PDU_TEST("/send*0203 \r", SendPdu);
+SIMPLE_PDU_TEST("/send *0223\t\r", SendPdu);
+SIMPLE_PDU_TEST("/send\t*020C \t \r", SendPdu);
+SIMPLE_PDU_TEST("/send \t *024C\t\t\t\t\r", SendPdu);
+
+SIMPLE_PDU_TEST("/busy*021C\r\n", BusyPdu);
+SIMPLE_PDU_TEST("/create*02CD\r\n", CreatePdu);
+SIMPLE_PDU_TEST("/term*0211\r\n", TermPdu);
+SIMPLE_PDU_TEST("/send*0203\r\n", SendPdu);
+SIMPLE_PDU_TEST("/scan*01FE\r\n", ScanPdu);
+SIMPLE_PDU_TEST("/turn*0222\r\n", TurnPdu);
+
+SIMPLE_PDU_TEST("/verify\r\nTo: Gandalf\r\n/end verify*0B01\r\n", VerifyPdu);
+SIMPLE_PDU_TEST("/env\r\nTo: Gandalf\r\n/end env*0869\r\n", EnvPdu);
+SIMPLE_PDU_TEST("/comment\r\nThis is a comment\r\n/end comment*0E1B\r\n", CommentPdu);
+
+INSTANTIATE_TEST_SUITE_P(Scan, PduParserSyntaxErrorException,
+                         // clang-format off
+    testing::Values(
+		"/scan FOLDER=((INBOX))*ZZZZ\r",
+		"/scan FOLDER*ZZZZ\r",
+		"/scan FOLDER=INBOX*ZZZZ\r",
+		"/scan FOLDER=(INBOX), FOLDER=(OUTBOX)*ZZZZ\r",
+		"/scan PRIORITY=something*ZZZZ\r"
+	));
+// clang-format on
+
+INSTANTIATE_TEST_SUITE_P(Scan, PduParserMalformedDataErrorException,
+                         // clang-format off
+    testing::Values(
+		"/scan FOLDER=(NOTREAL)*ZZZZ\r",
+		"/scan SUBJECT=(Invalid%00Character)*ZZZZ\r"
+	));
+// clang-format on
+
+// Scan and Turn PDUs have identical options
+class ScanTest : public PduParserTest {
+  protected:
+    ScanPdu CreateScanPdu(const std::string& options) {
+        ParseLine(std::format("/scan {} *ZZZZ\r\n", options));
+        return std::get<ScanPdu>(p.extract_pdu());
+    }
+
+    TurnPdu CreateTurnPdu(const std::string& options) {
+        ParseLine(std::format("/turn {} *ZZZZ\r\n", options));
+        return std::get<TurnPdu>(p.extract_pdu());
+    }
+
+    void CompareScanField(const ScanPdu& pdu, auto args) {
+        const auto& [field, value] = args;
+        EXPECT_EQ((pdu.*field)(), value);
+    }
+
+    void CompareTurnField(const TurnPdu& pdu, auto args) {
+        const auto& [field, value] = args;
+        EXPECT_EQ((pdu.*field)(), value);
+    }
+
+    template <typename... Args> void CompareFields(const std::string& options, Args&&... args) {
+        ScanPdu scanpdu = CreateScanPdu(options);
+        TurnPdu turnpdu = CreateTurnPdu(options);
+        (CompareScanField(scanpdu, args), ...);
+        (CompareTurnField(turnpdu, args), ...);
+    }
+};
+
+TEST_F(ScanTest, valid) {
+    // clang-format off
+    CompareFields("", 
+    	std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::inbox));
+    CompareFields("FOLDER=(INBOX)",
+    	std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::inbox));
+    CompareFields("FOLDER=(INBOX) ",
+    	std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::inbox));
+    CompareFields("FOLDER=(INBOX) \t\t\t",
+		std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::inbox));
+    CompareFields("FOLDER=(OUTBOX)",
+		std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::outbox));
+    CompareFields("FOLDER=(DESK)",
+    	std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::desk));
+    CompareFields("FOLDER=(TRASH)",
+    	std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::trash));
+    CompareFields("FOLDER=(OUTBOX),FOLDER=(TRASH)",
+		std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::trash));
+	CompareFields("FOLDER=(OUTBOX),SUBJECT=(Subject Line)",
+		std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::outbox),
+		std::pair(&ScanPdu::get_subject, "Subject Line"));
+	CompareFields("FOLDER=(OUTBOX),FROM=(Gandalf The Gray)",
+		std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::outbox),
+		std::pair(&ScanPdu::get_from, "Gandalf The Gray"));
+	CompareFields("FOLDER=(OUTBOX),FROM=(Gandalf The Gray),SUBJECT=(Subject Line)",
+		std::pair(&ScanPdu::get_folder_id, ScanPdu::folder_id::outbox),
+		std::pair(&ScanPdu::get_from, "Gandalf The Gray"),
+		std::pair(&ScanPdu::get_subject, "Subject Line"));
+    // clang-format on
+}
+
+INSTANTIATE_TEST_SUITE_P(Verify, PduParserSyntaxErrorException,
+                         // clang-format off
+    testing::Values(
+		"/verify*ZZZZ\r",
+		"/verify\r\n/end verify*ZZZZ",
+		"/verify\r\n/end verify*ZZZ\r\n",
+		"/verify\r\n/end verify*",
+		"/verify\r\n/end text*ZZZZ\r\n"
+	));
+// clang-format on
+
+INSTANTIATE_TEST_SUITE_P(
+    Verify, PduParserMalformedDataErrorException,
+    // clang-format off
+    testing::Values(
+		"/verify NONEEXISTANT\r",
+		"/verify STUFF STUFF\r",
+		// Unescaped "/" in address
+		"/verify\r\nTo: Gandalf/111-1111\r\n/end verify*ZZZZ\r\n",
+		// Invalid options
+		"/verify\r\nTo: Gandalf (,)\r\n/end verify*ZZZZ\r\n",
+		"/verify\r\nTo: Gandalf (,BOARD)\r\n/end verify*ZZZZ\r\n",
+		"/verify\r\nTo: Gandalf (NONEXISTANT)\r\n/end verify*ZZZZ\r\n"
+	));
+// clang-format on
+
+TEST_F(PduParserTest, Comment) {
+    EXPECT_THROW(ParseLine("/comment\r\nInvalid / in text\r\n/end comment*zzzz\r\n"),
+                 PduMalformedDataError);
+}
+
+TEST_F(PduParserTest, Verify) {
+    EXPECT_THROW(ParseLine("/verify\r\n/end verify*zzzz\r\n"), PduNoEnvelopeDataError);
+    EXPECT_THROW(ParseLine("/verify\r\nCc: Gandalf\r\n/end verify*zzzz\r\n"), PduToRequiredError);
+}
+
+template <class P> class VerifyEnvTest : public PduParserTest {
+  protected:
+    P CreatePdu(const std::string& line) {
+        ParseLine(line);
+        return std::get<P>(p.extract_pdu());
+    }
+
+    void CompareField(const P& pdu, auto args) {
+        const auto& [field, value] = args;
+        EXPECT_EQ((pdu.*field)(), value);
+    }
+
+    template <typename... Args>
+    void CompareFields(const std::string& line, const std::vector<RawAddress>& raw_to,
+                       const std::vector<RawAddress>& raw_cc, Args&&... args) {
+        P pdu = CreatePdu(line);
+        EXPECT_EQ(pdu.get_to_address().size(), raw_to.size());
+        EXPECT_EQ(pdu.get_cc_address().size(), raw_cc.size());
+        for (size_t i = 0; i < pdu.get_to_address().size(); ++i) {
+            EXPECT_EQ(pdu.get_to_address()[i], raw_to[i]);
+        }
+        for (size_t i = 0; i < pdu.get_cc_address().size(); ++i) {
+            EXPECT_EQ(pdu.get_cc_address()[i], raw_cc[i]);
+        }
+        (CompareField(pdu, args), ...);
+    }
+};
+
+typedef VerifyEnvTest<VerifyPdu> VerifyTest;
+typedef VerifyEnvTest<EnvPdu> EnvTest;
+
+TEST_F(VerifyTest, priority) {
+#define GANDALF "To: Gandalf %2F 111-1111\r\n"
+#define END "/end verify*zzzz\r\n"
+    std::vector<RawAddress> gandalf_to = {{._name = "Gandalf", ._id = "111-1111"}};
+
+    CompareFields("/verify\r\n" GANDALF END, gandalf_to, {},
+                  std::pair{&VerifyPdu::get_priority_id, VerifyPdu::priority_id::none});
+    CompareFields("/verify POSTAL\r\n" GANDALF END, gandalf_to, {},
+                  std::pair{&VerifyPdu::get_priority_id, VerifyPdu::priority_id::postal});
+    CompareFields("/verify ONITE\r\n" GANDALF END, gandalf_to, {},
+                  std::pair{&VerifyPdu::get_priority_id, VerifyPdu::priority_id::onite});
+#undef GANDALF
+#undef END
+}
+
+TEST_F(VerifyTest, addresses) {
+#define GANDALF "To: Gandalf"
+#define FRODO "CC: Frodo"
+#define END "/end verify*zzzz\r\n"
+
+    CompareFields("/verify\r\n" GANDALF "\r\n" END, {{._name = "Gandalf"}}, {});
+    CompareFields("/verify\r\n" GANDALF "(BOARD)\r\n" END, {{._name = "Gandalf", ._board = true}},
+                  {});
+    CompareFields("/verify\r\n" GANDALF "\r\n" FRODO "\r\n" END, {{._name = "Gandalf"}},
+                  {{._name = "Frodo"}});
+#undef GANDALF
+#undef FRODO
+#undef END
+}
+
+TEST_F(EnvTest, priority) {
+#define GANDALF "To: Gandalf %2F 111-1111\r\n"
+#define END "/end env*zzzz\r\n"
+    std::vector<RawAddress> gandalf_to = {{._name = "Gandalf", ._id = "111-1111"}};
+
+    CompareFields("/env\r\n" GANDALF END, gandalf_to, {},
+                  std::pair{&VerifyPdu::get_priority_id, VerifyPdu::priority_id::none});
+    CompareFields("/env POSTAL\r\n" GANDALF END, gandalf_to, {},
+                  std::pair{&VerifyPdu::get_priority_id, VerifyPdu::priority_id::postal});
+    CompareFields("/env ONITE\r\n" GANDALF END, gandalf_to, {},
+                  std::pair{&VerifyPdu::get_priority_id, VerifyPdu::priority_id::onite});
+#undef GANDALF
+#undef END
+}
+
+TEST_F(EnvTest, addresses) {
+#define GANDALF "To: Gandalf"
+#define FRODO "CC: Frodo"
+#define END "/end env*zzzz\r\n"
+
+    CompareFields("/env\r\n" GANDALF "\r\n" END, {{._name = "Gandalf"}}, {});
+    CompareFields("/env\r\n" GANDALF "(BOARD)\r\n" END, {{._name = "Gandalf", ._board = true}}, {});
+    CompareFields("/env\r\n" GANDALF "\r\n" FRODO "\r\n" END, {{._name = "Gandalf"}},
+                  {{._name = "Frodo"}});
+#undef GANDALF
+#undef FRODO
+#undef END
+}
+
+TEST_F(EnvTest, fields) {
+#define START "/env\r\nTo: Gandalf\r\n"
+#define END "/end env*zzzz\r\n"
+#define SUBJECT "A very fine subject"
+#define MESSAGEID "A very fine message ID"
+    std::vector<RawAddress> gandalf_to = {{._name = "Gandalf"}};
+    std::vector<std::string> source_messageid = {
+        "source Special-message id 2", "source Special-message id 3", "source Special-message id 4",
+        "source Special-message id 5", "source Special-message id 6"};
+    std::vector<std::pair<std::string, std::string>> u_headers = {
+        {"U-BLAH1", "Unknown custom field 2"},
+        {"U-GODOT", "Unknown custom field 3"},
+        {"U-LLAMAS-ONE-TWO", "Unknown custom field 4"},
+        {"U-AND_OTHER-CHARS", "Unknown custom field 5"},
+        {"u-the-last-one", "Unknown custom field 6"}
+
+    };
+    Date d;
+    d.parse("Sun Aug 11, 2024 12:00 AM GMT");
+
+    CompareFields(START END, gandalf_to, {}, std::pair(&EnvPdu::has_date, false),
+                  std::pair(&EnvPdu::has_source_date, false));
+
+    CompareFields(START "Date: Sun Aug 11, 2024 12:00 AM GMT\r\n" END, gandalf_to, {},
+                  std::pair(&EnvPdu::get_date, d), std::pair(&EnvPdu::has_source_date, false));
+    CompareFields(START "Source-Date: Sun Aug 11, 2024 12:00 AM GMT\r\n" END, gandalf_to, {},
+                  std::pair(&EnvPdu::get_source_date, d), std::pair(&EnvPdu::has_date, false));
+
+    CompareFields(START "Subject:" SUBJECT "\r\n" END, gandalf_to, {},
+                  std::pair(&EnvPdu::get_subject, SUBJECT));
+
+    CompareFields(START "Message-id:" MESSAGEID "\r\n" END, gandalf_to, {},
+                  std::pair(&EnvPdu::get_message_id, MESSAGEID));
+
+    // We only store the last 5 source-message ids
+    CompareFields(START "source-Message-ID: source Special-message id 1\r\n"
+                        "source-Message-ID: source Special-message id 2\r\n"
+                        "source-Message-ID: source Special-message id 3\r\n"
+                        "source-Message-ID: source Special-message id 4\r\n"
+                        "source-Message-ID: source Special-message id 5\r\n"
+                        "source-Message-ID: source Special-message id 6\r\n" END,
+                  gandalf_to, {}, std::pair(&EnvPdu::get_source_message_id, source_messageid));
+
+    // We only store the last 5 custom u- headers
+    CompareFields(START "U-SOMETHING1: Unknown custom field 1\r\n"
+                        "U-BLAH1: Unknown custom field 2\r\n"
+                        "U-GODOT: Unknown custom field 3\r\n"
+                        "U-LLAMAS-ONE-TWO: Unknown custom field 4\r\n"
+                        "U-AND_OTHER-CHARS: Unknown custom field 5\r\n"
+                        "u-the-last-one: Unknown custom field 6\r\n" END,
+                  gandalf_to, {}, std::pair(&EnvPdu::get_u_fields, u_headers));
+
+    CompareFields(START "From: Frodo\r\n" END, gandalf_to, {},
+                  std::pair(&EnvPdu::get_from_address, RawAddress{._name = "Frodo"}));
+#undef START
+#undef END
+#undef SUBJECT
+#undef MESSAGEID
+}
+
+TEST_F(PduParserTest, invalidEnv) {
+    EXPECT_THROW(ParseLine("/env\rTo: Bilbo\rFrom:Gandalf\rFrom:Frodo\r/end env*zzzz\r"),
+                 PduEnvelopeDataError);
+}
+
+class TextFixture : public PduParserTest {
+  protected:
+    void ExpectCorrectType(const std::string& type_text, TextPdu::content_type expected) {
+        ParseLine(std::format("/text {}\r\n/end text*zzzz\r\n", type_text));
+        TextPdu pdu = std::get<TextPdu>(p.extract_pdu());
+        EXPECT_EQ(pdu.get_content_type(), expected);
+    }
+
+    void ExpectDescription(const std::string& description, const std::string& expected) {
+        std::string line = std::format("/text ASCII:{}\r\n/end text*zzzz\r\n", description);
+        ParseLine(line);
+        TextPdu pdu = std::get<TextPdu>(p.extract_pdu());
+        EXPECT_TRUE(pdu.has_description());
+        EXPECT_EQ(pdu.get_description(), expected);
+    }
+};
+
+TEST_F(TextFixture, ContentTypes) {
+    const std::vector<std::pair<const std::string, TextPdu::content_type>> types = {
+        {"", TextPdu::content_type::ascii},           {"ASCII", TextPdu::content_type::ascii},
+        {"PRINTABLE", TextPdu::content_type::ascii},  {"ENV", TextPdu::content_type::env},
+        {"BINARY", TextPdu::content_type::binary},    {"G3FAX", TextPdu::content_type::binary},
+        {"TLX", TextPdu::content_type::binary},       {"VOICE", TextPdu::content_type::binary},
+        {"TIF0", TextPdu::content_type::binary},      {"TIF1", TextPdu::content_type::binary},
+        {"TTX", TextPdu::content_type::binary},       {"VIDEOTEX", TextPdu::content_type::binary},
+        {"ENCRYPTED", TextPdu::content_type::binary}, {"SFD", TextPdu::content_type::binary},
+        {"RACAL", TextPdu::content_type::binary},
+    };
+
+    for (const auto& t : types) {
+        SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
+        ExpectCorrectType(t.first, t.second);
+    }
+}
+
+TEST_F(TextFixture, Description) {
+    const std::vector<std::pair<const std::string, const std::string>> descriptions = {
+        {"description", "description"},
+        {" description ", "description"},
+        {"\tdescription\t", "description"},
+        {"text%2Fplain", "text/plain"},
+        {"sfj4dc.BOB", "sfj4dc.BOB"},
+        {" description with spaces", "description with spaces"}};
+
+    for (const auto& t : descriptions) {
+        SCOPED_TRACE(testing::Message()
+                     << "with test_data['" << t.first << "', '" << t.second << "']");
+        ExpectDescription(t.first, t.second);
+    }
+}
+
+class TemporaryStorageTest : public AsyncTest {
+  protected:
+    std::filesystem::path temp_root;
+
+    void SetUp() override {
+        temp_root = "runtime_tmp";
+        std::filesystem::remove_all(temp_root);
+        std::filesystem::create_directories(temp_root);
+    }
+
+    void TearDown() override { std::filesystem::remove_all(temp_root); }
+};
+
+TEST_F(TemporaryStorageTest, valid) {
+    RunAsync([&]() -> asio::awaitable<void> {
+        const std::string data = "This is some file data\r\n";
+        std::filesystem::path temp_path = temp_root / "data";
+        temp_path = temp_path / "lama";
+
+        TemporaryStorage p(io_context, temp_path, 1024);
+        TemporaryFile f = p.create_file();
+        size_t bytes = co_await f.write(data);
+        EXPECT_EQ(bytes, data.size());
+        EXPECT_TRUE(f.close());
+
+        std::filesystem::path file_path = temp_path / f.get_filename();
+        std::ifstream file(file_path);
+        std::string content((std::istreambuf_iterator<char>(file)),
+                            std::istreambuf_iterator<char>());
+        EXPECT_EQ(content, data);
+    });
 }

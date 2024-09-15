@@ -4,8 +4,12 @@
 #include <stdexcept>
 #include <string_view>
 
+#include <asio.hpp>
+
 #include "mep2_pdu.hpp"
 #include "trie.hpp"
+
+using asio::awaitable;
 
 void validate_checksum(const PduChecksum& checksum, std::string_view line);
 std::string_view strip_pdu_crlf(std::string_view line);
@@ -32,7 +36,7 @@ consteval auto create_pdu_trie() {
 
 class PduParser {
   public:
-    void parse_line(std::string_view line);
+    awaitable<void> parse_line(std::string_view line);
 
     PduVariant extract_pdu() {
         if (_state != state::complete) {

@@ -1,4 +1,5 @@
 #include <format>
+#include <optional>
 #include <print>
 #include <regex>
 #include <string_view>
@@ -10,9 +11,29 @@
 bool is_mciid(std::string_view line) {
     // MCI IDs are in the form of:
     // 123-4567, 123-456-7890, 1234567, 1234567890
-  
+
     static const std::regex mciid_regex(R"(^(\d{3}-\d{4}|\d{3}-\d{3}-\d{4}|\d{7}|\d{10})$)");
     return std::regex_match(line.begin(), line.end(), mciid_regex);
+}
+
+std::optional<std::string_view> parse_mciid(std::string_view line) {
+    bool explicit_mciid = false;
+    if (line.starts_with("MCI ID:")) {
+        line.remove_prefix(7);
+        lstrip(line);
+
+        explicit_mciid = true;
+    }
+
+    if (is_mciid(line)) {
+        return line;
+    }
+
+    if (explicit_mciid) {
+        throw PduMalformedDataError("Invalid MCI ID after MCI ID:");
+    }
+
+    return std::nullopt;
 }
 
 std::string canonicalize_mciid(std::string_view line) {
@@ -209,8 +230,9 @@ void RawAddress::parse_first_line(std::string_view line) {
 
     // No slashes, must just be a name or id.
     if (num_slashes == 0) {
-        if (is_mciid(line)) {
-            _id = canonicalize_mciid(line);
+        auto mciid = parse_mciid(line);
+        if (mciid.has_value()) {
+            _id = canonicalize_mciid(*mciid);
         } else {
             if (!line.length()) {
                 throw PduMalformedDataError("Name cannot be empty");
@@ -227,10 +249,10 @@ void RawAddress::parse_first_line(std::string_view line) {
         throw PduMalformedDataError("Name/ID field invalid");
     }
     rstrip(first_part);
-
-    if (is_mciid(first_part)) {
+    auto mciid = parse_mciid(first_part);
+    if (mciid.has_value()) {
         // Handle "MCIID / Org or Loc"
-        _id = canonicalize_mciid(first_part);
+        _id = canonicalize_mciid(*mciid);
     } else {
         // Handle "Name / MCIid" or "Name / Org or Loc"
         if (!line.length()) {
@@ -247,10 +269,11 @@ void RawAddress::parse_first_line(std::string_view line) {
     strip(line);
 
     if (num_slashes == 1) {
-        // Deal with "User name / MCIID"
         if (_id.empty()) {
-            if (is_mciid(line)) {
-                _id = canonicalize_mciid(line);
+			auto mciid = parse_mciid(line);
+            // Deal with "User name / MCIID"
+            if (mciid.has_value()) {
+                _id = canonicalize_mciid(*mciid);
                 return;
             }
         }
