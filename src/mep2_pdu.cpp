@@ -366,32 +366,46 @@ void TextPdu::parse_options(std::string_view options) {
     lstrip(options);
     if (icompare(options, "ascii")) {
         _content_type = content_type::ascii;
+        _content_type_handling = content_type::ascii;
     } else if (icompare(options, "printable")) {
-        _content_type = content_type::ascii;
+        _content_type = content_type::printable;
+        _content_type_handling = content_type::ascii;
     } else if (icompare(options, "env")) {
         _content_type = content_type::env;
+        _content_type_handling = content_type::env;
     } else if (icompare(options, "binary")) {
         _content_type = content_type::binary;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "g3fax")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::g3fax;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "tlx")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::tlx;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "voice")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::voice;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "tif0")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::tif0;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "tif1")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::tif1;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "ttx")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::ttx;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "videotex")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::videotex;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "encrypted")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::encypted;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "sfd")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::sfd;
+        _content_type_handling = content_type::binary;
     } else if (icompare(options, "racal")) {
-        _content_type = content_type::binary;
+        _content_type = content_type::racal;
+        _content_type_handling = content_type::binary;
     } else {
         throw PduMalformedDataError("Unknown text type");
     }
@@ -416,5 +430,4 @@ void TextPdu::parse_options(std::string_view options) {
     _description = decode_string(description);
 }
 
-void TextPdu::_parse_line(std::string_view line) {
-}
+void TextPdu::_parse_line(std::string_view line) {}

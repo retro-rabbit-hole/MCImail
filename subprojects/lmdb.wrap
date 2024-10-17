@@ -1,0 +1,13 @@
+[wrap-file]
+directory = openldap-LMDB_0.9.29
+source_url = https://git.openldap.org/openldap/openldap/-/archive/LMDB_0.9.29/openldap-LMDB_0.9.29.tar.gz
+source_filename = openldap-LMDB_0.9.29.tar.gz
+source_hash = e4d9f32dba4e15fcc66e0085a03432ff40a8065848d352ea47b1cb717e7369a4
+patch_filename = lmdb_0.9.29-3_patch.zip
+patch_url = https://wrapdb.mesonbuild.com/v2/lmdb_0.9.29-3/get_patch
+patch_hash = c0ef0cb092ec628a30bbaaf6ef91ba9b30f6fae652bfe55da7b74e90ea7d4cf4
+wrapdb_version = 0.9.29-3
+
+[provide]
+lmdb = lmdb_dep
+program_names = mdb_stat, mdb_copy, mdb_dump, mdb_load

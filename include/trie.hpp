@@ -1,5 +1,4 @@
-#ifndef INCLUDE_TRIE_HPP_
-#define INCLUDE_TRIE_HPP_
+#pragma once
 
 #include <array>
 #include <cstddef>
@@ -75,5 +74,3 @@ template <typename CommandEnum, size_t MaxCommands, size_t MaxDepth> class Trie 
         return std::nullopt;
     }
 };
-
-#endif /* INCLUDE_TRIE_HPP_ */

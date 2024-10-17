@@ -6,6 +6,8 @@ project('server', ['c', 'cpp'],
     ]
   )
 
+cmake = import('cmake')
+
 incdir = include_directories('include')
 
 add_project_arguments('-DASIO_HAS_FILE', language : 'cpp')
@@ -17,8 +19,21 @@ asio_dep = asio_proj.get_variable('asio_dep')
 liburing_proj = subproject('liburing')
 liburing_dep = dependency('liburing')
 
+lmdb_proj = subproject('lmdb')
+lmdb_dep = lmdb_proj.get_variable('lmdb_dep')
+
+capnp_opts = cmake.subproject_options()
+capnp_opts.add_cmake_defines({
+    'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+    'BUILD_TESTING': 'OFF',
+    'CAPNP_LITE': 'ON'
+})
+
+capnp_proj = cmake.subproject('capnproto', options: capnp_opts)
+capnp_dep = capnp_proj.dependency('capnp')
+
 mep2_pdu_lib_sources = [
-	'src/temporary_storage.cpp',
+	'src/mail_store.cpp',
 	'src/mep2_pdu_parser.cpp',
 	'src/mep2_pdu.cpp',
 	'src/address.cpp',
@@ -27,7 +42,7 @@ mep2_pdu_lib_sources = [
 
 mep2_pdu_lib = static_library('mep2_pdu',
 	mep2_pdu_lib_sources,
-	dependencies: [ asio_dep, liburing_dep ],
+	dependencies: [ asio_dep, liburing_dep, lmdb_dep, capnp_dep ],
 	include_directories : incdir)
 	
 executable('serverv2', 'src/serverv2.c', include_directories : incdir)
@@ -38,7 +53,7 @@ gtest_main_dep = gtest_proj.get_variable('gtest_main_dep')
 
 tests = executable('testprog', 'test/test.cpp', 
 	include_directories: incdir,
-	dependencies: [ gtest_dep, gtest_main_dep, asio_dep, liburing_dep ],
+	dependencies: [ gtest_dep, gtest_main_dep, asio_dep, liburing_dep, lmdb_dep ],
 	link_with: mep2_pdu_lib,
 	)
 	

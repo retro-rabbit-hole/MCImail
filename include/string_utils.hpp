@@ -12,7 +12,7 @@ std::string decode_string(std::string_view sv);
 // Our own because we don't want any locale interpretations
 constexpr char lower(const char c) { return (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c; }
 
-constexpr unsigned char char_to_hex(const unsigned char c) {
+constexpr unsigned char hex_to_char(const unsigned char c) {
     if (c >= '0' && c <= '9') {
         return c - '0';
     }
@@ -22,8 +22,12 @@ constexpr unsigned char char_to_hex(const unsigned char c) {
         return lc - 'a' + 10;
     }
 
-    throw std::invalid_argument("Input is not a valid hex string");
+    throw std::invalid_argument("Input is not a valid hex character");
 }
+
+constexpr unsigned char char_to_hex(const unsigned char c) {
+    return c < 10 ? '0' + c : 'A' + (c - 10);
+};
 
 inline bool is_printable(const std::string_view sv) {
     return std::all_of(sv.begin(), sv.end(), [](char c) { return c >= 32 && c <= 126; });

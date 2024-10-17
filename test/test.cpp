@@ -11,11 +11,11 @@
 #include "address.hpp"
 #include "asio/awaitable.hpp"
 #include "date.hpp"
+#include "mail_store.hpp"
 #include "mep2_errors.hpp"
 #include "mep2_pdu.hpp"
 #include "mep2_pdu_parser.hpp"
 #include "string_utils.hpp"
-#include "temporary_storage.hpp"
 
 #define CONCAT_IMPL(x, y) x##_##y
 #define MACRO_CONCAT(x, y) CONCAT_IMPL(x, y)
@@ -629,6 +629,7 @@ SIMPLE_PDU_TEST("/turn*0222\r\n", TurnPdu);
 SIMPLE_PDU_TEST("/verify\r\nTo: Gandalf\r\n/end verify*0B01\r\n", VerifyPdu);
 SIMPLE_PDU_TEST("/env\r\nTo: Gandalf\r\n/end env*0869\r\n", EnvPdu);
 SIMPLE_PDU_TEST("/comment\r\nThis is a comment\r\n/end comment*0E1B\r\n", CommentPdu);
+SIMPLE_PDU_TEST("/text\r\n/end text*0580\r\n", TextPdu);
 
 INSTANTIATE_TEST_SUITE_P(Scan, PduParserSyntaxErrorException,
                          // clang-format off
@@ -910,6 +911,12 @@ class TextFixture : public PduParserTest {
         EXPECT_EQ(pdu.get_content_type(), expected);
     }
 
+    void ExpectCorrectHandlingType(const std::string& type_text, TextPdu::content_type expected) {
+        ParseLine(std::format("/text {}\r\n/end text*zzzz\r\n", type_text));
+        TextPdu pdu = std::get<TextPdu>(p.extract_pdu());
+        EXPECT_EQ(pdu.get_content_type_handling(), expected);
+    }
+
     void ExpectDescription(const std::string& description, const std::string& expected) {
         std::string line = std::format("/text ASCII:{}\r\n/end text*zzzz\r\n", description);
         ParseLine(line);
@@ -919,7 +926,32 @@ class TextFixture : public PduParserTest {
     }
 };
 
-TEST_F(TextFixture, ContentTypes) {
+TEST_F(TextFixture, ContentType) {
+    const std::vector<std::pair<const std::string, TextPdu::content_type>> types = {
+        {"", TextPdu::content_type::ascii},
+        {"ASCII", TextPdu::content_type::ascii},
+        {"PRINTABLE", TextPdu::content_type::printable},
+        {"ENV", TextPdu::content_type::env},
+        {"BINARY", TextPdu::content_type::binary},
+        {"G3FAX", TextPdu::content_type::g3fax},
+        {"TLX", TextPdu::content_type::tlx},
+        {"VOICE", TextPdu::content_type::voice},
+        {"TIF0", TextPdu::content_type::tif0},
+        {"TIF1", TextPdu::content_type::tif1},
+        {"TTX", TextPdu::content_type::ttx},
+        {"VIDEOTEX", TextPdu::content_type::videotex},
+        {"ENCRYPTED", TextPdu::content_type::encypted},
+        {"SFD", TextPdu::content_type::sfd},
+        {"RACAL", TextPdu::content_type::racal},
+    };
+
+    for (const auto& t : types) {
+        SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
+        ExpectCorrectType(t.first, t.second);
+    }
+}
+
+TEST_F(TextFixture, ContentTypeHandling) {
     const std::vector<std::pair<const std::string, TextPdu::content_type>> types = {
         {"", TextPdu::content_type::ascii},           {"ASCII", TextPdu::content_type::ascii},
         {"PRINTABLE", TextPdu::content_type::ascii},  {"ENV", TextPdu::content_type::env},
@@ -933,7 +965,7 @@ TEST_F(TextFixture, ContentTypes) {
 
     for (const auto& t : types) {
         SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
-        ExpectCorrectType(t.first, t.second);
+        ExpectCorrectHandlingType(t.first, t.second);
     }
 }
 
@@ -963,19 +995,22 @@ class TemporaryStorageTest : public AsyncTest {
         std::filesystem::create_directories(temp_root);
     }
 
-    void TearDown() override { std::filesystem::remove_all(temp_root); }
+    void TearDown() override { /*std::filesystem::remove_all(temp_root); */ }
 };
 
-TEST_F(TemporaryStorageTest, valid) {
-    RunAsync([&]() -> asio::awaitable<void> {
-        const std::string data = "This is some file data\r\n";
-        std::filesystem::path temp_path = temp_root / "data";
-        temp_path = temp_path / "lama";
+TEST_F(TemporaryStorageTest, text) {
+    const std::string data = "This is some file data\r\n";
+    std::filesystem::path temp_path = temp_root / "data";
+    temp_path = temp_path / "lama";
 
-        TemporaryStorage p(io_context, temp_path, 1024);
-        TemporaryFile f = p.create_file();
+    std::string filename;
+
+    RunAsync([&]() -> asio::awaitable<void> {
+        MailStore p(io_context, temp_path, 1024);
+        MailStoreFile f = p.create_file();
         size_t bytes = co_await f.write(data);
         EXPECT_EQ(bytes, data.size());
+        filename = f.get_filename();
         EXPECT_TRUE(f.close());
 
         std::filesystem::path file_path = temp_path / f.get_filename();
@@ -983,5 +1018,67 @@ TEST_F(TemporaryStorageTest, valid) {
         std::string content((std::istreambuf_iterator<char>(file)),
                             std::istreambuf_iterator<char>());
         EXPECT_EQ(content, data);
+    });
+
+    RunAsync([&]() -> asio::awaitable<void> {
+        MailStore p(io_context, temp_path, 1024);
+        MailStoreFile f = p.open_file(filename);
+        std::string content = co_await f.read(1024);
+        EXPECT_EQ(content.size(), data.size());
+        EXPECT_TRUE(f.close());
+
+        EXPECT_EQ(content, data);
+    });
+
+    RunAsync([&]() -> asio::awaitable<void> {
+        MailStore p(io_context, temp_path, 1024);
+        MailStoreFile f = p.open_file(filename);
+        std::string content = co_await f.read(5);
+        EXPECT_EQ(content.size(), 5);
+        EXPECT_TRUE(f.close());
+
+        EXPECT_EQ(content, data.substr(0, 5));
+    });
+}
+
+TEST_F(TemporaryStorageTest, binary) {
+    const std::string data = "This is some file data\r\n";
+    std::filesystem::path temp_path = temp_root / "data";
+    temp_path = temp_path / "lama";
+
+    std::string filename;
+
+    RunAsync([&]() -> asio::awaitable<void> {
+        std::ifstream encoded_file("FAKESHAR.TXT", std::ios::binary | std::ios::in);
+        EXPECT_FALSE(encoded_file.fail());
+        std::string encoded_content((std::istreambuf_iterator<char>(encoded_file)),
+                                    std::istreambuf_iterator<char>());
+
+        std::ifstream decoded_file("FAKESHAR.COM", std::ios::binary | std::ios::in);
+        EXPECT_FALSE(decoded_file.fail());
+        std::string decoded_content((std::istreambuf_iterator<char>(decoded_file)),
+                                    std::istreambuf_iterator<char>());
+
+        MailStore p(io_context, temp_path, 1024);
+        MailStoreFile f = p.create_file();
+
+        std::string_view encoded(encoded_content);
+        size_t written = 0;
+        while (written < encoded_content.size()) {
+            size_t w = co_await f.write_encoded(encoded.substr(0, 10));
+            encoded.remove_prefix(w);
+            written += w;
+        }
+
+        // EXPECT_EQ(written, decoded_content.size());
+        filename = f.get_filename();
+        EXPECT_TRUE(f.close());
+
+        std::filesystem::path file_path = temp_path / f.get_filename();
+        std::ifstream file(file_path, std::ios::binary | std::ios::in);
+        EXPECT_FALSE(file.fail());
+        std::string content((std::istreambuf_iterator<char>(file)),
+                            std::istreambuf_iterator<char>());
+        EXPECT_EQ(content, decoded_content);
     });
 }

@@ -86,7 +86,7 @@ struct PduChecksum {
 
         for (auto c : checksum) {
             _checksum <<= 4;
-            _checksum |= char_to_hex(c);
+            _checksum |= hex_to_char(c);
         }
     }
     PduChecksum(uint16_t checksum) : _checksum(checksum) {}
@@ -110,6 +110,8 @@ struct PduChecksum {
 class Pdu {
   public:
     Pdu(PduType type) : _type(type) {};
+    virtual ~Pdu() = default;
+    
     PduChecksum& get_checksum() { return _checksum; }
     const PduType get_type() const { return _type; }
 
@@ -134,8 +136,6 @@ class Pdu {
             throw PduSyntaxError("Option for non-option PDU");
         }
     };
-
-    virtual ~Pdu() = default;
 
   protected:
     virtual void _parse_line([[maybe_unused]] std::string_view line) {
@@ -233,17 +233,17 @@ class EnvelopeHeaderPdu : public Pdu {
     priority_id get_priority_id() const { return _priority; }
 
     const std::vector<RawAddress>& get_to_address() const { return _to_address; }
-
     const std::vector<RawAddress>& get_cc_address() const { return _cc_address; }
 
   protected:
+    enum class address_parse_state { idle, parsing_to, parsing_cc, parsing_from };
+
     EnvelopeHeaderPdu(PduType type) : Pdu(type) {}
+
     void parse_envelope_line(std::string_view line, bool address_only);
     void _finalize();
 
     void finish_current_address();
-
-    enum class address_parse_state { idle, parsing_to, parsing_cc, parsing_from };
 
     bool _envelope_data = false;
     address_parse_state _address_parse_state = address_parse_state::idle;
@@ -298,12 +298,28 @@ class EnvPdu : public EnvelopeHeaderPdu {
 
 class TextPdu : public Pdu {
   public:
-    enum class content_type { ascii, env, binary };
+    enum class content_type {
+        ascii,
+        env,
+        binary,
+        printable,
+        g3fax,
+        tlx,
+        voice,
+        tif0,
+        tif1,
+        ttx,
+        videotex,
+        encypted,
+        sfd,
+        racal
+    };
 
     TextPdu() : Pdu(PduType(PduType::type_id::text)) {}
     void parse_options(std::string_view options);
 
     content_type get_content_type() const { return _content_type; }
+    content_type get_content_type_handling() const { return _content_type_handling; }
     const std::string& get_description() const { return *_description; }
 
     bool has_description() const { return _description.has_value(); }
@@ -314,6 +330,7 @@ class TextPdu : public Pdu {
 
     // If unspecified we assume ASCII
     content_type _content_type{TextPdu::content_type::ascii};
+    content_type _content_type_handling{TextPdu::content_type::ascii};
     std::optional<std::string> _description;
 };
 

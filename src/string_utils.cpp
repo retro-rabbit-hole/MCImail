@@ -23,7 +23,7 @@ inline unsigned char decode_percent(std::string_view sv) {
 	
     unsigned char hex1 = sv[1];
     unsigned char hex2 = sv[2];
-    return (char_to_hex(hex1) << 4) | char_to_hex(hex2);
+    return (hex_to_char(hex1) << 4) | hex_to_char(hex2);
 }
 
 std::string decode_string(std::string_view sv) {
