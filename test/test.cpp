@@ -253,6 +253,7 @@ class StringDecodeFixture : public ::testing::Test {
 
 TEST_F(StringDecodeFixture, ValidValues) {
     const std::vector<std::pair<std::string, std::string>> cases = {
+        {"", ""},
         {"Simple ASCII string", "Simple ASCII string"},
         {"Simple ASCII string with newline\r\n", "Simple ASCII string with newline\r\n"},
         {"Percent sign %25", "Percent sign %"},
@@ -267,7 +268,8 @@ TEST_F(StringDecodeFixture, ValidValues) {
         {"Single linefeed will be deleted\x0a", "Single linefeed will be deleted"},
         {"Single carriage return will be deleted\x0d", "Single carriage return will be deleted"},
         {"Strip top bits: \xc1\xd3\xc3\xc9\xc9", "Strip top bits: ASCII"},
-        {"Transparent%\r\n crlf are removed", "Transparent crlf are removed"}};
+        {"Transparent%\r\n crlf are removed", "Transparent crlf are removed"},
+    };
 
     for (const auto& t : cases) {
         SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
@@ -279,6 +281,28 @@ TEST(StringDecode, invalid) {
     EXPECT_THROW(decode_string("Invalid % code"), std::invalid_argument);
     EXPECT_THROW(decode_string("Invalid percent code %a"), std::invalid_argument);
     EXPECT_THROW(decode_string("Stray / in data"), std::invalid_argument);
+}
+
+class StringEncodeFixture : public ::testing::Test {
+  protected:
+    void ExpectEncode(const std::string& in, const std::string& expected) {
+        EXPECT_EQ(encode_string(in), expected);
+    }
+};
+
+TEST_F(StringEncodeFixture, ValidValues) {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"", ""},
+        {"Simple ASCII string", "Simple ASCII string"},
+        {"Simple ASCII string with newline\r\n", "Simple ASCII string with newline\r\n"},
+        {"Percent sign %", "Percent sign %25"},
+        {"MCI Address: Gandalf / 111-1111", "MCI Address: Gandalf %2F 111-1111"},
+        {"🤯", "%F0%9F%A4%AF"}};
+
+    for (const auto& t : cases) {
+        SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
+        ExpectEncode(t.first, t.second);
+    }
 }
 
 TEST(is_mciid, invalid) {
@@ -307,6 +331,12 @@ class RawAddressFixture : public ::testing::Test {
         RawAddress a;
         a.parse_first_line(line);
         EXPECT_EQ(a._id, expected._id);
+    }
+
+    void FirstLineExpectEqualStr(const std::string& line, const std::string& expected) {
+        RawAddress a;
+        a.parse_first_line(line);
+        EXPECT_EQ(a.str(), expected);
     }
 
     void FirstLineExpectMalformed(const std::string& line) {
@@ -366,13 +396,13 @@ TEST_F(RawAddressFixture, Equals) {
     const std::vector<std::pair<std::string, RawAddress>> cases = {
         // clang-format off
         {"111-1111 ", {._id = "111-1111"}},
-        {"1111111 ", {._id = "111-1111"}},
-        {"0001111111 ", {._id = "111-1111"}},
-        {"000-111-1111 ", {._id = "111-1111"}},
-        {"000-1111 ", {._id = "000-1111"}},
-        {"111-111-1111 ", {._id = "111-111-1111"}},
-        {"1111111111 ", {._id = "111-111-1111"}},
-        {"0011111111 ", {._id = "001-111-1111"}},
+        {"1111111", {._id = "111-1111"}},
+        {"0001111111", {._id = "111-1111"}},
+        {"000-111-1111", {._id = "111-1111"}},
+        {"000-1111", {._id = "000-1111"}},
+        {"111-111-1111", {._id = "111-111-1111"}},
+        {"1111111111", {._id = "111-111-1111"}},
+        {"0011111111", {._id = "001-111-1111"}},
         {"MCI ID: 111-1111", {._id = "111-1111"}},
         {"Gandalf the Gray / MCI ID: 111-1111", {._name = "Gandalf the Gray", ._id = "111-1111"}},
         {"Gandalf the Gray  ", {._name = "Gandalf the Gray"}},
@@ -400,6 +430,47 @@ TEST_F(RawAddressFixture, Equals) {
     for (const auto& t : cases) {
         SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
         FirstLineExpectEqual(t.first, t.second);
+    }
+}
+
+TEST_F(RawAddressFixture, EqualsStr) {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        // clang-format off
+        {"111-1111 ", "111-1111"},
+        {"1111111", "111-1111"},
+        {"0001111111", "111-1111"},
+        {"000-111-1111", "111-1111"},
+        {"000-1111", "000-1111"},
+        {"111-111-1111", "111-111-1111"},
+        {"1111111111", "111-111-1111"},
+        {"0011111111", "001-111-1111"},
+        {"MCI ID: 111-1111", "111-1111"},
+        {"Gandalf the Gray / MCI ID: 111-1111", "Gandalf the Gray / 111-1111"},
+        {"Gandalf the Gray  ", "Gandalf the Gray"},
+        {"Gandalf the Gray/111-1111", "Gandalf the Gray / 111-1111"},
+        {"Gandalf the Gray / 111-1111 ", "Gandalf the Gray / 111-1111"}, 
+        {"Gandalf the Gray / Org: The Good Guys ", "Gandalf the Gray / Org: The Good Guys"},
+        {"Gandalf the Gray / Org: The Good Guys / Loc: Hobbiton ", "Gandalf the Gray / Loc: Hobbiton / Org: The Good Guys"},
+        {"Gandalf the Gray / The Good Guys / Loc: Hobbiton ", "Gandalf the Gray / Loc: Hobbiton / The Good Guys"},
+        {"Gandalf the Gray / Org: The Good Guys / Hobbiton ", "Gandalf the Gray / Org: The Good Guys / Hobbiton"},
+        {"Gandalf the Gray / The Good Guys / Hobbiton ", "Gandalf the Gray / The Good Guys / Hobbiton"},
+        {"Gandalf the Gray ( BOARD )", "Gandalf the Gray (BOARD)"},
+        {"Gandalf the Gray (       BOARD)", "Gandalf the Gray (BOARD)"},
+        {"Gandalf the Gray (BOARD)", "Gandalf the Gray (BOARD)"},
+        {"Gandalf the Gray (INSTANT)", "Gandalf the Gray (INSTANT)"},
+        {"Gandalf the Gray (LIST)", "Gandalf the Gray (LIST)"},
+        {"Gandalf the Gray (OWNER)", "Gandalf the Gray (OWNER)"},
+        {"Gandalf the Gray (ONITE)", "Gandalf the Gray (ONITE)"},
+        {"Gandalf the Gray (PRINT)", "Gandalf the Gray (PRINT)"},
+        {"Gandalf the Gray (RECEIPT)", "Gandalf the Gray (RECEIPT)"},
+        {"Gandalf the Gray (NO RECEIPT)", "Gandalf the Gray (NO RECEIPT)"},
+        {"Gandalf the Gray (BOARD, INSTANT, LIST, OWNER, ONITE, PRINT, RECEIPT, NO RECEIPT)", "Gandalf the Gray (BOARD, INSTANT, LIST, OWNER, ONITE, PRINT, RECEIPT, NO RECEIPT)"},
+        // clang-format on
+
+    };
+    for (const auto& t : cases) {
+        SCOPED_TRACE(testing::Message() << "with test_data[" << t.first << "]");
+        FirstLineExpectEqualStr(t.first, t.second);
     }
 }
 
@@ -896,6 +967,23 @@ TEST_F(EnvTest, fields) {
 #undef END
 #undef SUBJECT
 #undef MESSAGEID
+}
+
+TEST_F(PduParserTest, EnvToString) {
+    ParseLine("/env\r\n"
+              "To: Gandalf\r\n"
+              "Date: Sun Aug 11, 2024 12:00 AM GMT\r\n"
+              "CC: Frodo\r\n"
+              "Subject: This is %2f subject\r\n"
+              "/end env*zzzz\r\n");
+
+    EXPECT_TRUE(p.is_complete());
+    EnvPdu pdu = std::get<EnvPdu>(p.extract_pdu());
+
+    EXPECT_EQ(pdu.str(), "Date: Sun Aug 11, 2024 12:00 AM GMT\r\n"
+                         "To: Gandalf\r\n"
+                         "Cc: Frodo\r\n"
+                         "Subject: This is %2F subject\r\n");
 }
 
 TEST_F(PduParserTest, invalidEnv) {

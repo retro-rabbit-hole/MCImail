@@ -29,6 +29,7 @@ struct RawAddress {
     std::string _ems{};
     std::vector<std::string> _mbx{};
 
+	bool _has_options{false};
     bool _board{false};
     bool _instant{false};
     bool _list{false};

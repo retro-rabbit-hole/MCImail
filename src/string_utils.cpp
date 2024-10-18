@@ -42,7 +42,7 @@ std::string decode_string(std::string_view sv) {
         // When receiving data through mep2 we discard the top bits
         c &= 0x7F;
 
-        // It is always illegal for a / to appear unespaced
+        // It is always illegal for a / to appear unescaped
         if (c == '/') {
             throw std::invalid_argument("Stray / in data");
         }
@@ -135,6 +135,44 @@ std::string decode_string(std::string_view sv) {
 
         default:
             result.push_back(c);
+        }
+    }
+
+    return result;
+}
+
+std::string encode_string(std::string_view input) {
+    std::string result;
+    result.reserve(input.length() * 3); // Reserve space for worst-case scenario
+
+    // Characters that need to be encoded
+    static const std::array<unsigned char, 9> special_chars = {0x00, 0x0F, 0x11, 0x12, 0x13,
+                                                               0x15, 0x18, '%',  '/'};
+
+    auto encode_char = [&](unsigned char c) {
+        if (c & 0x80 ||
+            std::find(special_chars.begin(), special_chars.end(), c) != special_chars.end()) {
+            result += '%';
+            result += char_to_hex((c >> 4) & 0x0F);
+            result += char_to_hex(c & 0x0F);
+        } else {
+            result += c;
+        }
+    };
+
+    size_t chars_since_cr = 0;
+
+    for (char c : input) {
+        if (c == '\r') {
+            encode_char(c);
+            chars_since_cr = 0;
+        } else {
+            if (chars_since_cr >= 200) {
+                result += "%\r\n";
+                chars_since_cr = 0;
+            }
+            encode_char(c);
+            ++chars_since_cr;
         }
     }
 

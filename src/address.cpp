@@ -210,6 +210,7 @@ void RawAddress::parse_options(std::string_view& line) {
             throw PduMalformedDataError(
                 std::format("Malformed options, unknown option '{}'", option));
         }
+        _has_options = true;
     }
 }
 
@@ -270,7 +271,7 @@ void RawAddress::parse_first_line(std::string_view line) {
 
     if (num_slashes == 1) {
         if (_id.empty()) {
-			auto mciid = parse_mciid(line);
+            auto mciid = parse_mciid(line);
             // Deal with "User name / MCIID"
             if (mciid.has_value()) {
                 _id = canonicalize_mciid(*mciid);
@@ -340,6 +341,51 @@ void RawAddress::parse_field(std::string_view field, std::string_view informatio
 }
 
 const std::string RawAddress::str() const {
-    return std::format("'{}'/'{}'/'{}' b:{}, i:{}, l:{}, o:{}", _name, _id, _organization, _board,
-                       _instant, _list, _owner);
+    std::stringstream ss;
+    if (_name.empty()) {
+        ss << _id;
+    } else {
+        ss << _name;
+
+        if (!_id.empty()) {
+            ss << " / " << _id;
+        } else {
+            if (!_location.empty())
+                ss << " / Loc: " << _location;
+            if (!_organization.empty())
+                ss << " / Org: " << _organization;
+
+            if (!_unresolved_org_loc_1.empty())
+                ss << " / " << _unresolved_org_loc_1;
+            if (!_unresolved_org_loc_2.empty())
+                ss << " / " << _unresolved_org_loc_2;
+        }
+    }
+
+    static const std::array<std::pair<bool RawAddress::*, const char*>, 8> options = {
+        {{&RawAddress::_board, "BOARD"},
+         {&RawAddress::_instant, "INSTANT"},
+         {&RawAddress::_list, "LIST"},
+         {&RawAddress::_owner, "OWNER"},
+         {&RawAddress::_onite, "ONITE"},
+         {&RawAddress::_print, "PRINT"},
+         {&RawAddress::_receipt, "RECEIPT"},
+         {&RawAddress::_no_receipt, "NO RECEIPT"}}};
+
+    if (_has_options) {
+        bool first = true;
+        ss << " (";
+        for (auto v : options) {
+            if (this->*v.first) {
+                if (!first)
+                    ss << ", ";
+                else
+                    first = false;
+                ss << v.second;
+            }
+        }
+        ss << ")";
+    }
+
+    return ss.str();
 }

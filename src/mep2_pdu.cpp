@@ -1,3 +1,4 @@
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 
@@ -123,6 +124,30 @@ void CommentPdu::_parse_line(std::string_view line) {
     } catch (std::invalid_argument& e) {
         throw PduMalformedDataError(e.what());
     }
+}
+
+const std::string EnvPdu::str() const {
+    std::stringstream ss;
+    if (has_date()) {
+        ss << "Date: " << get_date().to_orig_string() << "\r\n";
+    }
+
+    if (has_from_address()) {
+        ss << "From: " << get_from_address().str() << "\r\n";
+    }
+    
+    for (auto a: get_to_address()) {
+		ss << "To: " << a.str() << "\r\n";
+	}
+	
+	for (auto a: get_cc_address()) {
+		ss << "Cc: " << a.str() << "\r\n";
+	}
+	
+	if (has_subject()) {
+		ss << "Subject: " << encode_string(get_subject()) << "\r\n";
+	}
+    return ss.str();
 }
 
 void EnvelopeHeaderPdu::parse_options(std::string_view options) {

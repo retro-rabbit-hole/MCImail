@@ -8,6 +8,7 @@
 #include <string_view>
 
 std::string decode_string(std::string_view sv);
+std::string encode_string(std::string_view sv);
 
 // Our own because we don't want any locale interpretations
 constexpr char lower(const char c) { return (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c; }

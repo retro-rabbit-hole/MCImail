@@ -274,7 +274,11 @@ class EnvPdu : public EnvelopeHeaderPdu {
   public:
     EnvPdu() : EnvelopeHeaderPdu(PduType(PduType::type_id::env)) {}
 
+	const std::string str() const;
+	
     const RawAddress& get_from_address() const { return *_from_address; }
+    const std::vector<RawAddress>& get_to_address() const { return _to_address ;}
+    const std::vector<RawAddress>& get_cc_address() const { return _cc_address ;}
     const Date& get_date() const { return *_date; }
     const Date& get_source_date() const { return *_source_date; }
     const std::string& get_subject() const { return *_subject; }
@@ -285,12 +289,15 @@ class EnvPdu : public EnvelopeHeaderPdu {
     }
 
     bool has_from_address() const { return _from_address.has_value(); }
+    bool has_to_addres() const { return !_to_address.empty(); }
+    bool has_cc_addres() const { return !_cc_address.empty(); }
     bool has_date() const { return _date.has_value(); }
     bool has_source_date() const { return _source_date.has_value(); }
     bool has_subject() const { return _subject.has_value(); }
     bool has_message_id() const { return _message_id.has_value(); }
     bool has_source_message_id() const { return !_source_message_id.empty(); }
     bool has_u_fields() const { return !_u_fields.empty(); }
+    
 
   protected:
     void _parse_line(std::string_view line) { parse_envelope_line(line, false); }
